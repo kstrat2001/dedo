@@ -1,0 +1,133 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © ka1n0s
+
+//@version=5
+indicator("Dark Energy Divergence Oscillator - DEDO", overlay = true)
+
+//INPUTS ----------------------------------------------------------------------------
+dedo_symbol = input.symbol("SPX", "DEDO Symbol")
+
+use_pre_ponzi_offset = input.bool(false, "Use Pre-Ponzification Offset", "Uses the DEDO Symbol price at the pre-ponzi date (pre-QE 9/9/2008 is default) to factor into the calculation against current liquidity")
+pre_ponzi_date = input.time(timestamp('2008-9-9 10:00 GMT-3'), 'Ponzi Start Date', "The date to sample price used in the ponzification offset calculation.  Subtracts this price first before normalization against liquidity factors")
+
+// CB Assets
+include_jpy = input.bool(true, "JPY Assets")
+include_cny = input.bool(true, "CNY Assets")
+include_uk = input.bool(true, "UK Assets")
+include_snb = input.bool(true, "SNB Assets")
+include_ecb = input.bool(true, "ECB Assets")
+
+// RRP Usage
+subtract_rrp = input.bool(false, "Subtract RRP")
+
+// Fed balance sheet method
+use_wresbal = input.bool(true, "Checked: WRESBAL, unchecked: WALCL - WTREGEN")
+
+// CB Allocation to Market
+cb_stock_pct = input.float(100, "CB % Allocation to Market", minval=0.0, maxval=100.0, step=0.01)
+
+// Helper to quickly draw the 0 bound
+draw_zero = input.bool(false, "Draw Zero Bound", "Helper that quickly draws a zero bound to see extension against liquidity measures.", inline = "02")
+zero_color = input.color(color.green, " - Color", "Color of the zero bound drawn by DEDO script", inline = "02")
+
+// Allocation table helper
+draw_allocation_table = input.bool(true, "Show Asset Allocation Table", "Show a table that provides liquidity allocation info, and suggests CB allocation settings are sufficient to support the market cap of the DEDO symbol being evaluated")
+
+// Multiplier to make the final values more readable. Different symbols will produced varied results.
+dedo_multiplier = input.float(100.0, "Multiplier",1.0,1000, 1.0)
+// END INPUTS ----------------------------------------------------------------------------
+
+// HELPER METHODS ------------------------------------------------------------------------
+billions_str(value) =>
+    retstr = "$" + str.tostring(value/1000000000, format.mintick) + " B"
+    retstr
+
+str_nocase_contains(str, comp) =>
+    contains = str.contains(str.upper(str), str.upper(comp))
+    contains
+// END HELPER METHODS --------------------------------------------------------------------
+
+// FED BS STATS
+line_fed_walcl   = request.security("FRED:WALCL",                     "D", close, currency = currency.USD)
+line_fed_tga     = request.security("WTREGEN",                        "D", close, currency = currency.USD)
+line_wresbal     = request.security("FRED:WRESBAL",                   "D", close, currency = currency.USD)
+line_rrp         = request.security("RRPONTSYD",                      "D", close, currency = currency.USD)
+
+// FOREIGN CENTRAL BANK ASSETS
+line_japan       = request.security("FRED:JPNASSETS * FX_IDC:JPYUSD", "D", close, currency = currency.USD)
+line_china       = request.security("CNCBBS         * FX_IDC:CNYUSD", "D", close, currency = currency.USD)
+line_uk          = request.security("GBCBBS         * FX:GBPUSD",     "D", close, currency = currency.USD)
+line_ecb         = request.security("ECBASSETSW     * FX:EURUSD",     "D", close, currency = currency.USD)
+line_snb         = request.security("CHCBBS",                         "D", close, currency = currency.USD)
+
+// pct CB assets into decimal
+cb_pct_factor = cb_stock_pct / 100.0
+
+// FED Calculation
+line_fed_calc = line_fed_walcl - line_fed_tga
+fed_value = (use_wresbal ? line_wresbal : line_fed_calc)
+
+// conditionally determine which CB assets are used in the total liquidity pool based on user settings
+jpy_final = (include_jpy ? line_japan : 0)
+cny_final = (include_cny ? line_china : 0)
+gbp_final = (include_uk  ? line_uk : 0)
+snb_final = (include_snb ? line_snb : 0)
+ecb_final = (include_ecb ? line_ecb : 0)
+rrp_final = (subtract_rrp ? line_rrp : 0)
+
+liquidity_total = fed_value - rrp_final + jpy_final + cny_final + gbp_final + snb_final + ecb_final
+liquidity_total_symbol_alloc = fed_value - rrp_final + ((jpy_final + cny_final + gbp_final + snb_final + ecb_final) * cb_pct_factor)
+cb_assets_max_allocated = ta.max(liquidity_total_symbol_alloc)
+norm_total_cb = liquidity_total_symbol_alloc / cb_assets_max_allocated
+//plot(norm_total_cb, "norm-tot", color.red)
+
+dedo_symbol_o   = request.security(dedo_symbol,timeframe.period, open, currency = currency.USD)
+dedo_symbol_h   = request.security(dedo_symbol,timeframe.period, high, currency = currency.USD)
+dedo_symbol_l   = request.security(dedo_symbol,timeframe.period, low, currency = currency.USD)
+dedo_symbol_c   = request.security(dedo_symbol,timeframe.period, close, currency = currency.USD)
+
+period = time >= pre_ponzi_date and time[1] < pre_ponzi_date
+pre_ponzi = use_pre_ponzi_offset ? ta.valuewhen(period, dedo_symbol_c, 0) : 0
+// Debug plot to help see the value
+//plot(pre_ponzi, "pre-ponz", color.white)
+
+dedo_series_open =  (norm_total_cb - ((dedo_symbol_o - pre_ponzi)/(ta.max(dedo_symbol_h) - pre_ponzi))) * dedo_multiplier
+dedo_series_high =  (norm_total_cb - ((dedo_symbol_h - pre_ponzi)/(ta.max(dedo_symbol_h) - pre_ponzi))) * dedo_multiplier
+dedo_series_low =   (norm_total_cb - ((dedo_symbol_l - pre_ponzi)/(ta.max(dedo_symbol_h) - pre_ponzi))) * dedo_multiplier
+dedo_series_close = (norm_total_cb - ((dedo_symbol_c - pre_ponzi)/(ta.max(dedo_symbol_h) - pre_ponzi))) * dedo_multiplier
+
+dedo_zero_price = norm_total_cb * (ta.max(dedo_symbol_h) - pre_ponzi) + pre_ponzi
+
+candle_color = dedo_series_open >= dedo_series_close ? color.lime : color.red
+
+// Plot candles for dedo signal
+plotcandle( dedo_series_open, dedo_series_high, dedo_series_low, dedo_series_close, title = 'DEDO', color = candle_color, wickcolor = candle_color, bordercolor = candle_color)
+
+if draw_zero
+    zero_line=line.new(bar_index - 1, 0, bar_index, 0, extend = extend.both, color = zero_color)
+
+// Get the shares outstanding to calculate the mkt cap of the dedo symbol
+tso = nz(request.financial(str.tostring(dedo_symbol), "TOTAL_SHARES_OUTSTANDING", "FQ", ignore_invalid_symbol=true))
+mkt_cap = (na(tso) ? 0 : tso * dedo_symbol_c)
+
+if draw_allocation_table
+    var table mkt_cap_liquidity_tbl = table.new(position.bottom_right, 6, 3, frame_color = color.gray, bgcolor = color.gray, border_width = 1, frame_width = 1, border_color = color.white)
+    // Header
+    table.cell(mkt_cap_liquidity_tbl, 0, 0, "Total CB Liquidity",                     bgcolor = color.white)
+    table.cell(mkt_cap_liquidity_tbl, 1, 0, "Mkt Cap " + str.tostring(dedo_symbol),   bgcolor = color.white)
+    table.cell(mkt_cap_liquidity_tbl, 2, 0, "Mkt Cap % Total CB Assets",              bgcolor = color.white)
+    table.cell(mkt_cap_liquidity_tbl, 3, 0, "CB Assets Alloc'd",                      bgcolor = color.white)
+    table.cell(mkt_cap_liquidity_tbl, 4, 0, "DEDO 0 Price",                           bgcolor = color.white)
+
+    // fill the table
+    table.cell(mkt_cap_liquidity_tbl, 0, 1, billions_str(liquidity_total),            bgcolor = color.white)
+    table.cell(mkt_cap_liquidity_tbl, 1, 1, mkt_cap == 0 ? "N/A" : billions_str(mkt_cap),                bgcolor = color.white)
+
+    // create a string that indicates mkt cap % of total liquidity
+    mkt_cap_pct_str = mkt_cap == 0 ? "N/A" : str.tostring(mkt_cap/nz(liquidity_total)*100, format.percent)
+    table.cell(mkt_cap_liquidity_tbl, 2, 1, mkt_cap_pct_str,                          bgcolor = color.white)
+
+    // color this cell yellow if allocated pct is too low to cover the market cap of the asset, green if pct allocation is sufficient
+    allocd_total_color = mkt_cap == 0 ? color.white : ((liquidity_total * cb_pct_factor) < mkt_cap ? color.yellow : color.lime)
+    table.cell(mkt_cap_liquidity_tbl, 3, 1, billions_str(liquidity_total * cb_pct_factor), bgcolor = allocd_total_color)
+    table.cell(mkt_cap_liquidity_tbl, 4, 1, "$" + str.tostring(dedo_zero_price,format.mintick), bgcolor = color.white)
