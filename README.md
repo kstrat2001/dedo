@@ -1,3 +1,5 @@
+# Dark Energy Divergence Oscillator (DEDO)
+
 ### What makes The Universe grow at an accelerating pace?
 
 ### Dark Energy
@@ -8,7 +10,6 @@
 
 ### Debt is the Dark Energy of The Economy.
 _________________________________________________________________________________
-# Dark Energy Divergence Oscillator (DEDO)
 
 I pronounce DEDO "Deed-oh", but variations are fine with me.
 
